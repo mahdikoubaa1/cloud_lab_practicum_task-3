@@ -1,0 +1,44 @@
+{
+  "tests": [
+    {
+      "name": "Build",
+      "setup": "",
+      "run": "mkdir build && cd build && cmake ..&& timeout -s9 2m make && cp ctl-test .. && cp kvs-test ..",
+      "input": "",
+      "output": "",
+      "comparison": "included",
+      "timeout": 10,
+      "points": null
+    },
+    {
+      "name": "Test failure detection",
+      "setup": "",
+      "run": "timeout -s9 5m python3 tests/test_failure_detection.py",
+      "input": "",
+      "output": "",
+      "comparison": "included",
+      "timeout": 10,
+      "points": 8
+    },
+    {
+      "name": "Test leader election",
+      "setup": "",
+      "run": "timeout -s9 2m python3 tests/test_leader_election.py",
+      "input": "",
+      "output": "",
+      "comparison": "included",
+      "timeout": 10,
+      "points": 8
+    },
+    {
+      "name": "Test replication",
+      "setup": "",
+      "run": "timeout -s9 2m python3 tests/test_replication.py",
+      "input": "",
+      "output": "",
+      "comparison": "included",
+      "timeout": 10,
+      "points": 9
+    }
+  ]
+}
