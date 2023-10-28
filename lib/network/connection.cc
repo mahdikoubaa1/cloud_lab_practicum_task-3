@@ -12,120 +12,120 @@
 
 namespace cloudlab {
 
-Connection::Connection(const SocketAddress& address) {
-  addrinfo hints{}, *req = nullptr;
-  memset(&hints, 0, sizeof(addrinfo));
+    Connection::Connection(const SocketAddress &address) {
+        addrinfo hints{}, *req = nullptr;
+        memset(&hints, 0, sizeof(addrinfo));
 
-  if (address.is_ipv4()) {
-    hints.ai_family = AF_INET;
-    hints.ai_addrlen = sizeof(struct sockaddr_in);
-  } else {
-    hints.ai_family = AF_INET6;
-    hints.ai_addrlen = sizeof(struct sockaddr_in6);
-  }
+        if (address.is_ipv4()) {
+            hints.ai_family = AF_INET;
+            hints.ai_addrlen = sizeof(struct sockaddr_in);
+        } else {
+            hints.ai_family = AF_INET6;
+            hints.ai_addrlen = sizeof(struct sockaddr_in6);
+        }
 
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_flags = IPPROTO_TCP;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_flags = IPPROTO_TCP;
 
-  if (getaddrinfo(address.get_ip_address().c_str(),
-                  std::to_string(address.get_port()).c_str(), &hints,
-                  &req) != 0) {
-    throw std::runtime_error("getaddrinfo() failed");
-  }
+        if (getaddrinfo(address.get_ip_address().c_str(),
+                        std::to_string(address.get_port()).c_str(), &hints,
+                        &req) != 0) {
+            throw std::runtime_error("getaddrinfo() failed");
+        }
 
-  fd = socket(req->ai_family, req->ai_socktype, req->ai_protocol);
-  if (fd == -1) {
-    throw std::runtime_error("socket() failed");
-  }
+        fd = socket(req->ai_family, req->ai_socktype, req->ai_protocol);
+        if (fd == -1) {
+            throw std::runtime_error("socket() failed");
+        }
 
-  // allow kernel to rebind address even when in TIME_WAIT state
-  int yes = 1;
-  if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
-    throw std::runtime_error("setsockopt() failed");
-  }
+        // allow kernel to rebind address even when in TIME_WAIT state
+        int yes = 1;
+        if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
+            throw std::runtime_error("setsockopt() failed");
+        }
 
-  if (connect(fd, req->ai_addr, req->ai_addrlen) == -1) {
-    // throw std::runtime_error("perform_connect() failed");
-    connect_failed = true;
-  }
+        if (connect(fd, req->ai_addr, req->ai_addrlen) == -1) {
+            // throw std::runtime_error("perform_connect() failed");
+            connect_failed = true;
+        }
 
-  freeaddrinfo(req);
-}
-
-Connection::Connection(const std::string& address)
-    : Connection(SocketAddress{address}) {
-}
-
-Connection::~Connection() {
-  close(fd);
-}
-
-auto Connection::receive(cloud::CloudMessage& msg) const -> bool {
-  uint32_t size{}, read_bytes{};
-
-  if (bev) {
-    auto* input = bufferevent_get_input(static_cast<struct bufferevent*>(bev));
-    read_bytes = evbuffer_remove(input, &size, 4);
-  } else {
-    read_bytes = read(fd, &size, 4);
-  }
-
-  if (read_bytes < 4) {
-    if (read_bytes == 0) {
-      // connection closed by other side -> we should close our connection as
-      // well ... for now we just return here
-      return false;
+        freeaddrinfo(req);
     }
 
-    throw std::runtime_error(
-        fmt::format("Received an incomplete message of {} bytes", read_bytes));
-  }
+    Connection::Connection(const std::string &address)
+            : Connection(SocketAddress{address}) {
+    }
 
-  // convert size to host byte order
-  size = ntohl(size);
+    Connection::~Connection() {
+        close(fd);
+    }
 
-  if (size > max_message_size) {
-    throw std::runtime_error(
-        "Connection received a message that exceeds the maximum message size");
-  }
+    auto Connection::receive(cloud::CloudMessage &msg) const -> bool {
+        uint32_t size{}, read_bytes{};
 
-  auto buf = std::make_unique<uint8_t[]>(size);
+        if (bev) {
+            auto *input = bufferevent_get_input(static_cast<struct bufferevent *>(bev));
+            read_bytes = evbuffer_remove(input, &size, 4);
+        } else {
+            read_bytes = read(fd, &size, 4);
+        }
 
-  // read rest of the message
-  if (bev) {
-    auto* input = bufferevent_get_input(static_cast<struct bufferevent*>(bev));
-    read_bytes = evbuffer_remove(input, buf.get(), size);
-  } else {
-    read_bytes = read(fd, buf.get(), size);
-  }
+        if (read_bytes < 4) {
+            if (read_bytes == 0) {
+                // connection closed by other side -> we should close our connection as
+                // well ... for now we just return here
+                return false;
+            }
 
-  msg.ParseFromArray(buf.get(), size);
+            throw std::runtime_error(
+                    fmt::format("Received an incomplete message of {} bytes", read_bytes));
+        }
 
-  return (read_bytes == size);
-}
+        // convert size to host byte order
+        size = ntohl(size);
 
-auto Connection::send(const cloud::CloudMessage& msg) const -> bool {
-  uint32_t size = msg.ByteSizeLong();
-  auto buffer = std::make_unique<uint8_t[]>(size + 4);
+        if (size > max_message_size) {
+            throw std::runtime_error(
+                    "Connection received a message that exceeds the maximum message size");
+        }
 
-  // set first four bytes to size of message (in network byte order)
-  uint32_t size_nb = htonl(size);
-  memcpy(buffer.get(), &size_nb, 4);
+        auto buf = std::make_unique<uint8_t[]>(size);
 
-  // serialize message
-  msg.SerializeToArray(buffer.get() + 4, size);
+        // read rest of the message
+        if (bev) {
+            auto *input = bufferevent_get_input(static_cast<struct bufferevent *>(bev));
+            read_bytes = evbuffer_remove(input, buf.get(), size);
+        } else {
+            read_bytes = read(fd, buf.get(), size);
+        }
 
-  bool success{};
+        msg.ParseFromArray(buf.get(), size);
 
-  // write everything out
-  if (bev) {
-    auto fd = bufferevent_getfd(static_cast<struct bufferevent*>(bev));
-    success = write(fd, buffer.get(), size + 4) == size + 4;
-  } else {
-    success = write(fd, buffer.get(), size + 4) == size + 4;
-  }
+        return (read_bytes == size);
+    }
 
-  return success;
-}
+    auto Connection::send(const cloud::CloudMessage &msg) const -> bool {
+        uint32_t size = msg.ByteSizeLong();
+        auto buffer = std::make_unique<uint8_t[]>(size + 4);
+
+        // set first four bytes to size of message (in network byte order)
+        uint32_t size_nb = htonl(size);
+        memcpy(buffer.get(), &size_nb, 4);
+
+        // serialize message
+        msg.SerializeToArray(buffer.get() + 4, size);
+
+        bool success{};
+
+        // write everything out
+        if (bev) {
+            auto fd = bufferevent_getfd(static_cast<struct bufferevent *>(bev));
+            success = write(fd, buffer.get(), size + 4) == size + 4;
+        } else {
+            success = write(fd, buffer.get(), size + 4) == size + 4;
+        }
+
+        return success;
+    }
 
 }  // namespace cloudlab

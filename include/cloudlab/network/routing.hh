@@ -64,8 +64,7 @@ class Routing {
     std::unordered_map<SocketAddress, std::unordered_set<uint32_t>> tmp;
 
     for (const auto& [partition, peers] : table) {
-      if (!peers.empty()) {
-        auto peer = peers.front();
+      for (auto & peer : peers){
         if (tmp.contains(peer)) {
           tmp.at(peer).insert(partition);
         } else {

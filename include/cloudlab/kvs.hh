@@ -7,13 +7,19 @@
 #include <shared_mutex>
 #include <vector>
 
+#include "rocksdb/db.h"
+#include "rocksdb/options.h"
+#include "rocksdb/slice.h"
+
 // actually 840 is a good number
 const auto partitions = 4;
 
 namespace rocksdb {
-class DB;
-class Iterator;
-class ColumnFamilyHandle;
+    class DB;
+
+    class Iterator;
+
+    class ColumnFamilyHandle;
 }  // namespace rocksdb
 
 namespace cloudlab {
@@ -21,95 +27,110 @@ namespace cloudlab {
 /**
  * The key-value store. We use rocksdb for the actual key-value operations.
  */
-class KVS {
- public:
-  struct Sentinel {};
+    class KVS {
+    public:
+        struct Sentinel {
+        };
 
-  struct Iterator {
-    std::deque<rocksdb::Iterator*> iterators;
+        struct Iterator {
+            std::deque<rocksdb::Iterator *> iterators;
 
-    ~Iterator();
+            ~Iterator();
 
-    friend auto operator==(const Iterator& it, const Sentinel&) -> bool;
-    friend auto operator!=(const Iterator& lhs, const Sentinel& rhs) -> bool;
+            friend auto operator==(const Iterator &it, const Sentinel &) -> bool;
 
-    auto operator*() -> std::pair<std::string_view, std::string_view>;
-    auto operator++() -> Iterator&;
-  };
+            friend auto operator!=(const Iterator &lhs, const Sentinel &rhs) -> bool;
 
-  explicit KVS(const std::string& path = {}, bool open = false) : path{path} {
-    if (open) this->open();
-  }
+            auto operator*() -> std::pair<std::string_view, std::string_view>;
 
-  struct Partition {
-    rocksdb::DB* db;
-    rocksdb::ColumnFamilyHandle* handle;
+            auto operator++() -> Iterator &;
+        };
 
-    [[nodiscard]] auto begin() const -> Iterator;
+        explicit KVS(const std::string &path = {}, bool open = false) : path{path} {
+            if (open) this->open();
+        }
 
-    [[nodiscard]] auto end() const -> Sentinel;
-  };
+        struct Partition {
+            rocksdb::DB *db;
+            rocksdb::ColumnFamilyHandle *handle;
 
-  ~KVS();
+            [[nodiscard]] auto begin() const -> Iterator;
 
-  // delete copy constructor and copy assignment
-  KVS(const KVS&) = delete;
-  auto operator=(const KVS&) -> KVS& = delete;
+            [[nodiscard]] auto end() const -> Sentinel;
+        };
 
-  [[nodiscard]] auto begin() -> Iterator;
+        ~KVS();
 
-  [[nodiscard]] auto end() const -> Sentinel;
+        // delete copy constructor and copy assignment
+        KVS(const KVS &) = delete;
 
-  auto open() -> bool;
+        auto operator=(const KVS &) -> KVS & = delete;
 
-  auto get(const std::string& key, std::string& result) -> bool;
+        [[nodiscard]] auto begin() -> Iterator;
 
-  auto get_all(std::vector<std::pair<std::string, std::string>>& buffer)
-    -> bool;
+        [[nodiscard]] auto end() const -> Sentinel;
 
-  auto put(const std::string& key, const std::string& value) -> bool;
+        auto open() -> bool;
 
-  auto remove(const std::string& key) -> bool;
+        auto get(const std::string &key, std::string &result) -> bool;
 
-  auto create_partition(size_t id) {
-    // TODO(you)
-  }
+        auto get_all(std::vector<std::pair<std::string, std::string>> &buffer)
+        -> bool;
 
-  auto remove_partition(size_t id) {
-    // TODO(you)
-  }
+        auto put(const std::string &key, const std::string &value) -> bool;
 
-  static auto key_to_partition(const std::string& key) -> size_t {
-    // TODO(you)
-    return {};
-  }
+        auto remove(const std::string &key) -> bool;
 
-  auto has_partition(size_t id)-> bool {
-    // TODO(you)
-    return {};
-  }
+        auto create_partition(size_t id) {
+            rocksdb::ColumnFamilyHandle *cf;
+            if (!has_partition(id)) db->CreateColumnFamily(rocksdb::ColumnFamilyOptions(), std::to_string(id), &cf);
+            partition_handles.emplace_back(cf);
+        }
 
-  auto has_partition_for_key(const std::string& key) -> bool {
-    // TODO(you)
-    return {};
-  }
+        auto remove_partition(size_t id) {
+            auto k = std::find_if(partition_handles.begin(), partition_handles.end(),
+                                  [&id](rocksdb::ColumnFamilyHandle *handle) {
+                                      return handle->GetName() == std::to_string(id);
+                                  });
+            if (k != partition_handles.end()) {
+                db->DropColumnFamily(*k);
+                db->DestroyColumnFamilyHandle(*k);
+                partition_handles.erase(k);
+            }
+        }
 
-  auto partition(size_t id) -> Partition {
-    // TODO(you)
-    return {};
-  }
+        static auto key_to_partition(const std::string &key) -> size_t {
+            return std::hash<std::string>{}(key) % partitions;
+        }
 
-  auto clear() -> bool;
+        auto has_partition(size_t id) -> bool {
+            return partition(id).handle != nullptr;
+        }
 
-  auto clear_partition(size_t id) -> bool;
+        auto has_partition_for_key(const std::string &key) -> bool {
+            return has_partition(key_to_partition(key));
+        }
 
- private:
-  std::filesystem::path path;
-  rocksdb::DB* db{};
-  std::vector<rocksdb::ColumnFamilyHandle*> partition_handles;
-  std::set<size_t> partition_exists;
-  std::mutex mtx;
-};
+        auto partition(size_t id) -> Partition {
+            auto k = std::find_if(partition_handles.begin(), partition_handles.end(),
+                                  [&id](rocksdb::ColumnFamilyHandle *handle) {
+                                      return handle->GetName() == std::to_string(id);
+                                  });
+            if (k == partition_handles.end()) return {db, nullptr};
+            else return {db, *k};
+        }
+
+        auto clear() -> bool;
+
+        auto clear_partition(size_t id) -> bool;
+    private:
+        std::filesystem::path path;
+        rocksdb::DB *db{};
+        std::vector<rocksdb::ColumnFamilyHandle *> partition_handles;
+
+        std::set<size_t> partition_exists;
+        std::mutex mtx;
+    };
 
 }  // namespace cloudlab
 
